@@ -205,6 +205,8 @@ const CATS = [
 ];
 const CAT = Object.fromEntries(CATS.map(c => [c.id, c]));
 const ADD_CATS = ["courses", "carburant", "autres", "tca"];
+const SUBS = ["Cadeaux proches", "Restaurants", "Sorties & loisirs", "Shopping", "Beauté", "Santé", "Sport", "Animaux", "Voiture", "Logement", "Voyages", "Divers"];
+const TO_SORT = "À classer";
 const TABS = [
   { id: "mois", label: "Mois", icon: '<path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/>' },
   { id: "depenses", label: "Dépenses", icon: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>' },
@@ -241,7 +243,7 @@ function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch
 
 /* ---------- État et enregistrement ---------- */
 const state = Object.assign({ expenses: {}, months: {} }, lsGet("budget.data", {}));
-const ui = { tab: "mois", month: curMonth(), filter: "all", pieMode: "all", pieSel: null, evoCat: "all", evoRange: 12, evoSel: null };
+const ui = { tab: "mois", month: curMonth(), filter: "all", pieMode: "all", pieSel: null, evoCat: "all", evoRange: 12, evoSel: null, subRange: "month", subSel: null };
 let db = null, mode = "loading", queue = lsGet("budget.q", []), flushing = false, stale = false;
 const confirmed = { expenses: false, months: false };
 
@@ -425,7 +427,8 @@ function viewMois() {
   return html;
 }
 function expenseItem(e) {
-  return `<button class="item" data-act="edit" data-v="${esc(e.id)}"><div class="t"><div class="n">${esc(e.label || CAT[e.cat].short)}</div><div class="d">${esc(dateLabel(e.date))}</div></div><div class="a">${eur(e.cents)}</div></button>`;
+  const when = dateLabel(e.date), line = e.cat === "autres" ? (e.sub || TO_SORT) + " · " + when : when;
+  return `<button class="item" data-act="edit" data-v="${esc(e.id)}"><div class="t"><div class="n">${esc(e.label || CAT[e.cat].short)}</div><div class="d">${esc(line)}</div></div><div class="a">${eur(e.cents)}</div></button>`;
 }
 const byDate = (a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0);
 function fixedItem(f, c) {
@@ -486,7 +489,27 @@ function viewCamembert() {
       <div class="charttot"><strong>${eur(total)}</strong><span class="small">${ui.pieMode === "all" ? "charges fixes comptées en entier" : "dépenses hors charges fixes"}</span></div>
       <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Camembert des dépenses par catégorie">${slices}${labels}</svg>
     </section>
-    <section><h2>Par catégorie</h2><div class="panel">${rows}</div><p class="small" style="margin:8px 4px 0">Touche une catégorie pour voir le détail.</p></section>`;
+    <section><h2>Par catégorie</h2><div class="panel">${rows}</div><p class="small" style="margin:8px 4px 0">Touche une catégorie pour voir le détail.</p></section>
+    ${viewSubs()}`;
+}
+function viewSubs() {
+  const year = ui.subRange === "year", from = year ? shiftMonth(ui.month, -11) : ui.month;
+  const items = Object.entries(state.expenses).map(([id, e]) => ({ id, ...e })).filter(e => e.cat === "autres" && e.month >= from && e.month <= ui.month);
+  const groups = {};
+  items.forEach(e => { const k = e.sub || TO_SORT; (groups[k] = groups[k] || []).push(e); });
+  const list = Object.entries(groups).map(([name, es]) => ({ name, es: es.sort((a, b) => b.cents - a.cents), cents: sum(es.map(e => e.cents)) })).sort((a, b) => (a.name === TO_SORT) - (b.name === TO_SORT) || b.cents - a.cents);
+  const total = sum(list.map(g => g.cents));
+  const seg = `<div class="seg"><button data-act="subrange" data-v="month" aria-pressed="${!year}">Ce mois</button><button data-act="subrange" data-v="year" aria-pressed="${year}">12 derniers mois</button></div>`;
+  const noDetail = year && Object.keys(state.months).some(m => m >= from && m <= ui.month && state.months[m].summary);
+  const rows = list.map(g => {
+    const open = ui.subSel === g.name;
+    const lines = open ? `<div class="readout" style="margin-top:8px;padding-top:8px">${g.es.map(e => `<div class="l"><span>${esc(e.label || "Sans libellé")}${year ? " · " + esc(monthShort(e.month)) : ""}</span><span>${eur(e.cents)}</span></div>`).join("")}</div>` : "";
+    return `<button class="row" data-act="subsel" data-v="${esc(g.name)}" aria-expanded="${open}"><div class="rowhead"><span class="name">${esc(g.name)}</span><span class="of">${Math.round(g.cents / total * 100)} %</span><span class="amt">${eur(g.cents)}</span></div><div class="meter" style="--c:var(--c-autres)"><i style="width:${(g.cents / total * 100).toFixed(1)}%"></i></div>${lines}</button>`;
+  }).join("");
+  return `<section><h2>Dans les autres dépenses</h2><div class="stack" style="gap:10px">${seg}
+    ${list.length ? `<div class="panel">${rows}</div>` : '<div class="panel" style="padding-block:14px"><p class="small" style="margin:0">Aucune autre dépense sur cette période.</p></div>'}
+    ${noDetail ? '<p class="small" style="margin:0 4px">Janvier et février ne sont pas comptés ici : ton fichier n\'a que leurs totaux.</p>' : ""}
+  </div></section>`;
 }
 function detailRows(id, c) {
   const list = id === "fixes"
@@ -572,7 +595,24 @@ function suggestions(cat) {
   Object.values(state.expenses).filter(e => e.cat === cat && e.label && !/^(Plein|Course) \d+$/.test(e.label)).forEach(e => { counts[e.label] = (counts[e.label] || 0) + 1; });
   return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 6).map(x => x[0]);
 }
+function allSubs() {
+  const used = Object.values(state.expenses).map(e => e.sub).filter(s => s && !SUBS.includes(s));
+  return [...SUBS, ...[...new Set(used)].sort()];
+}
+function renderSubs() {
+  $("f-subwrap").hidden = form.cat !== "autres";
+  const list = allSubs(); if (form.sub && !list.includes(form.sub)) list.push(form.sub);
+  $("f-subs").innerHTML = list.map(s => `<button type="button" class="chip" data-act="fsub" data-v="${esc(s)}" aria-pressed="${form.sub === s}">${esc(s)}</button>`).join("") + '<button type="button" class="chip" data-act="fsubnew">+ Nouvelle</button>';
+}
+function guessSub() {
+  /* Reprend le rangement déjà choisi pour le même libellé. */
+  if (form.sub || form.cat !== "autres") return;
+  const label = $("f-label").value.trim().toLowerCase(); if (!label) return;
+  const hit = Object.values(state.expenses).filter(e => e.sub && (e.label || "").toLowerCase() === label).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+  if (hit) { form.sub = hit.sub; renderSubs(); }
+}
 function renderCatPicker() {
+  renderSubs();
   $("f-cats").innerHTML = ADD_CATS.map(id => `<button type="button" class="chip" data-act="fcat" data-v="${id}" aria-pressed="${form.cat === id}">${form.cat === id ? "" : catDot(id)}${esc(CAT[id].short)}</button>`).join("");
   const s = suggestions(form.cat);
   $("f-sugg").innerHTML = s.map(l => `<button type="button" class="chip" data-act="fsugg" data-v="${esc(l)}">${esc(l)}</button>`).join("");
@@ -581,11 +621,16 @@ function renderCatPicker() {
 function openExpense(id) {
   const e = id ? state.expenses[id] : null;
   const defDate = ui.month === curMonth() ? todayISO() : ui.month + "-" + pad(daysIn(ui.month));
-  form = { id, cat: e ? e.cat : (ADD_CATS.includes(ui.filter) && ui.tab === "depenses" ? ui.filter : "courses"), sure: false };
+  form = { id, cat: e ? e.cat : (ADD_CATS.includes(ui.filter) && ui.tab === "depenses" ? ui.filter : "courses"), sub: e && e.sub || "", sure: false };
   openSheet(`${sheetHead(e ? "Modifier la dépense" : "Nouvelle dépense")}
     <form id="f-exp" class="stack" style="gap:14px" novalidate>
       <div class="moneybig"><input id="f-amount" inputmode="decimal" autocomplete="off" placeholder="0,00" aria-label="Montant en euros" value="${e ? moneyInput(e.cents) : ""}"><span>€</span></div>
       <div class="wrapchips" id="f-cats" role="group" aria-label="Catégorie"></div>
+      <div id="f-subwrap" class="stack" style="gap:6px" hidden>
+        <div class="colhead" style="margin:0">Dans quoi ? (facultatif)</div>
+        <div class="wrapchips" id="f-subs" role="group" aria-label="Sous-catégorie"></div>
+        <input class="inp" id="f-subnew" maxlength="30" autocomplete="off" placeholder="Nom de la nouvelle catégorie" aria-label="Nom de la nouvelle catégorie" hidden>
+      </div>
       <label class="f">Libellé (facultatif)<input class="inp" id="f-label" maxlength="60" autocomplete="off" placeholder="Soirée, kiné, plein…" value="${esc(e ? e.label : "")}"></label>
       <div class="wrapchips" id="f-sugg"></div>
       <label class="f">Date<input class="inp" id="f-date" type="date" value="${esc(e ? (e.date || "") : defDate)}"></label>
@@ -601,6 +646,8 @@ function submitExpense() {
   if (!cents || isNaN(cents)) { err.textContent = "Indique un montant, par exemple 24,38."; err.hidden = false; $("f-amount").focus(); return; }
   const date = $("f-date").value || null, old = form.id ? state.expenses[form.id] : null;
   const doc = { cents, cat: form.cat, label: $("f-label").value.trim(), date, month: date ? date.slice(0, 7) : (old ? old.month : ui.month), createdAt: old ? old.createdAt : Date.now() };
+  const sub = form.cat === "autres" ? ($("f-subnew").value.trim() || form.sub) : "";
+  if (sub) doc.sub = sub;
   const id = form.id || uid("e");
   save("expenses", id, doc);
   closeSheet();
@@ -738,8 +785,12 @@ const actions = {
   past() { openPast(null); },
   close() { closeSheet(); },
   backdrop(v, ev) { if (ev.target === ev.target.closest(".backdrop")) closeSheet(); },
-  fcat(v) { form.cat = v; renderCatPicker(); },
-  fsugg(v) { $("f-label").value = v; },
+  fcat(v) { form.cat = v; renderCatPicker(); guessSub(); },
+  fsugg(v) { $("f-label").value = v; guessSub(); },
+  fsub(v) { form.sub = form.sub === v ? "" : v; $("f-subnew").value = ""; $("f-subnew").hidden = true; renderSubs(); },
+  fsubnew() { form.sub = ""; renderSubs(); $("f-subnew").hidden = false; $("f-subnew").focus(); },
+  subrange(v) { ui.subRange = v; ui.subSel = null; render(); },
+  subsel(v) { ui.subSel = ui.subSel === v ? null : v; render(); },
   fdel() {
     const b = $("f-del");
     if (!b.classList.contains("sure")) { b.classList.add("sure"); b.textContent = "Confirmer la suppression"; return; }
@@ -777,6 +828,7 @@ document.addEventListener("click", ev => {
   const el = ev.target.closest("[data-act]"); if (!el) return;
   const fn = actions[el.dataset.act]; if (fn) fn(el.dataset.v, ev);
 });
+document.addEventListener("change", ev => { if (ev.target.id === "f-label") guessSub(); });
 document.addEventListener("keydown", ev => {
   if (ev.key === "Escape" && $("sheet").innerHTML) closeSheet();
   if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches && ev.target.matches("svg [data-act]")) { ev.preventDefault(); ev.target.dispatchEvent(new MouseEvent("click", { bubbles: true })); }
