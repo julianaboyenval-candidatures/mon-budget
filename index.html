@@ -201,7 +201,7 @@ const CATS = [
   { id: "carburant", label: "Carburant", short: "Carburant" },
   { id: "courses", label: "Courses", short: "Courses" },
   { id: "tca", label: "TCA / Frais pro", short: "Frais pro" },
-  { id: "autres", label: "Autres dépenses", short: "Autres" }
+  { id: "autres", label: "Dépenses libres", short: "Libres" }
 ];
 const CAT = Object.fromEntries(CATS.map(c => [c.id, c]));
 const ADD_CATS = ["courses", "carburant", "autres", "tca"];
@@ -410,7 +410,7 @@ function viewMois() {
   html += meterRow("fixes", c, "Dépenses fixes", c.paid, c.spent.fixes, c.past ? "Tout est passé" : (eur(fixRest) + " encore à passer"), "", c.spent.fixes ? c.paid / c.spent.fixes * 100 : 0, "", false);
   html += budgetRow("tca", c);
   html += `</div>`;
-  if (c.cur) html += `<p class="small" style="margin:8px 4px 0">Le trait sur les barres marque où on en est du mois (${now().getDate()}/${daysIn(ui.month)}). Le budget Autres, c'est ce qu'il te reste après fixes, carburant, courses et frais pro.</p>`;
+  if (c.cur) html += `<p class="small" style="margin:8px 4px 0">Le trait sur les barres marque où on en est du mois (${now().getDate()}/${daysIn(ui.month)}). Le budget des dépenses libres, c'est ce qu'il te reste après fixes, carburant, courses et frais pro : il change chaque mois.</p>`;
   html += `</section>`;
   if (!c.past && c.fixed.length) {
     const upcoming = c.cur || ui.month > curMonth() ? c.fixed.filter(f => f.cents && f.day && !c.isPaid(f)).sort((a, b) => a.day - b.day) : [];
@@ -506,8 +506,8 @@ function viewSubs() {
     const lines = open ? `<div class="readout" style="margin-top:8px;padding-top:8px">${g.es.map(e => `<div class="l"><span>${esc(e.label || "Sans libellé")}${year ? " · " + esc(monthShort(e.month)) : ""}</span><span>${eur(e.cents)}</span></div>`).join("")}</div>` : "";
     return `<button class="row" data-act="subsel" data-v="${esc(g.name)}" aria-expanded="${open}"><div class="rowhead"><span class="name">${esc(g.name)}</span><span class="of">${Math.round(g.cents / total * 100)} %</span><span class="amt">${eur(g.cents)}</span></div><div class="meter" style="--c:var(--c-autres)"><i style="width:${(g.cents / total * 100).toFixed(1)}%"></i></div>${lines}</button>`;
   }).join("");
-  return `<section><h2>Dans les autres dépenses</h2><div class="stack" style="gap:10px">${seg}
-    ${list.length ? `<div class="panel">${rows}</div>` : '<div class="panel" style="padding-block:14px"><p class="small" style="margin:0">Aucune autre dépense sur cette période.</p></div>'}
+  return `<section><h2>Dans les dépenses libres</h2><div class="stack" style="gap:10px">${seg}
+    ${list.length ? `<div class="panel">${rows}</div>` : '<div class="panel" style="padding-block:14px"><p class="small" style="margin:0">Aucune dépense libre sur cette période.</p></div>'}
     ${noDetail ? '<p class="small" style="margin:0 4px">Janvier et février ne sont pas comptés ici : ton fichier n\'a que leurs totaux.</p>' : ""}
   </div></section>`;
 }
@@ -695,7 +695,7 @@ function openSettings() {
       <section><h2>Revenus</h2><div id="s-rev">${rowsRevenue(cfg.revenues || [])}</div><button type="button" class="link" data-act="addrev">+ Ajouter un revenu</button></section>
       <section><h2>Budgets</h2><div class="stack" style="gap:12px">
         ${budgetField("courses", "Courses", cfg)}${budgetField("carburant", "Carburant", cfg)}${budgetField("tca", "TCA / Frais pro", cfg)}
-      </div><p class="small" style="margin:8px 0 0">Le budget Autres se calcule tout seul : c'est ce qu'il reste après tout le reste.</p></section>
+      </div><p class="small" style="margin:8px 0 0">Le budget des dépenses libres se calcule tout seul : revenus, moins charges fixes, moins ces budgets.</p></section>
       <section><h2>Charges fixes</h2><div class="formrow fix colhead"><span>Nom</span><span>Montant</span><span>Jour</span><span></span></div><div id="s-fix">${rowsFixed(cfg.fixed || [])}</div><button type="button" class="link" data-act="addfix">+ Ajouter une charge fixe</button></section>
       ${ui.month < curMonth() ? '<p class="small" style="margin:0">Ce mois est passé : le changement ne touche que lui.</p>' : `<section><h2>Appliquer à</h2><div class="seg"><button type="button" data-act="scope" data-v="forward" aria-pressed="true">Ce mois et les suivants</button><button type="button" data-act="scope" data-v="only" aria-pressed="false">Ce mois seulement</button></div><p class="small" style="margin:8px 0 0">Les mois déjà passés ne changent jamais. Pour une hausse à venir, va sur le mois concerné avec les flèches.</p></section>`}
       <div class="err" id="s-err" hidden></div>

@@ -1,5 +1,5 @@
 /* Garde l'appli sur le téléphone pour qu'elle s'ouvre sans réseau. Les données passent par backend.js. */
-const VERSION = "4e28ac6ae526";
+const VERSION = "c54bd149e165";
 const CACHE = "budget-" + VERSION, FONTS = "budget-fonts";
 const FILES = ["./", "index.html", "backend.js", "config.js", "manifest.webmanifest", "icon-192.png", "icon-512.png", "apple-touch-icon.png"];
 
