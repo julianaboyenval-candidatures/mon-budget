@@ -83,6 +83,11 @@ h2 { font-size: 13px; font-weight: 800; letter-spacing: .04em; text-transform: u
 .meter { position: relative; height: 10px; border-radius: 5px; margin-top: 8px; background: var(--line); background: color-mix(in srgb, var(--c) 18%, var(--surface)); }
 .meter i { position: absolute; inset: 0 auto 0 0; border-radius: 5px; background: var(--c); }
 .meter.over i { background: var(--bad); }
+.meter u { position: absolute; top: 0; bottom: 0; background: var(--c); opacity: .45; text-decoration: none; }
+.item .mini { flex: none; }
+.itemrow { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); }
+.itemrow .item { border-bottom: 0; flex: 1; min-width: 0; }
+.panel > .itemrow:last-child { border-bottom: 0; }
 .meter b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); border-radius: 1px; }
 .status { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; font-size: 13px; color: var(--muted); }
 .pill { font-size: 12px; font-weight: 800; border-radius: 99px; padding: 1px 8px; white-space: nowrap; background: var(--soft); color: var(--muted); }
@@ -322,7 +327,8 @@ function cfgFor(m) {
 const sum = a => a.reduce((s, x) => s + (x || 0), 0);
 function compute(m) {
   const cfg = cfgFor(m), t = cfg.summary ? (cfg.totals || {}) : {};
-  const items = Object.entries(state.expenses).map(([id, e]) => ({ id, ...e })).filter(e => e.month === m);
+  const monthDocs = Object.entries(state.expenses).map(([id, e]) => ({ id, ...e })).filter(e => e.month === m);
+  const items = monthDocs.filter(e => !e.planned), plans = monthDocs.filter(e => e.planned);
   const spent = { fixes: t.fixes || 0, carburant: t.carburant || 0, courses: t.courses || 0, tca: t.tca || 0, autres: t.autres || 0 };
   items.forEach(e => { spent[e.cat] = (spent[e.cat] || 0) + e.cents; });
   const fixed = cfg.fixed || [];
@@ -331,14 +337,16 @@ function compute(m) {
   const budgets = cfg.budgets || { carburant: 0, courses: 0 };
   const provCarb = Math.max(budgets.carburant || 0, spent.carburant), provCourses = Math.max(budgets.courses || 0, spent.courses), provTca = Math.max(budgets.tca || 0, spent.tca);
   const envelope = revenue - spent.fixes - provCarb - provCourses - provTca;
-  const planned = spent.fixes + provCarb + provCourses + provTca + spent.autres;
-  const real = sum(CATS.map(c => spent[c.id]));
   const past = m < curMonth();
+  /* Une dépense prévue réserve son montant tant que le mois n'est pas fini. */
+  const reserved = past ? 0 : sum(plans.map(e => e.cents));
+  const planned = spent.fixes + provCarb + provCourses + provTca + spent.autres + reserved;
+  const real = sum(CATS.map(c => spent[c.id]));
   const reste = revenue - planned;
   const nowDay = now().getDate(), cur = m === curMonth();
   const isPaid = f => past || (cur && f.day && f.day <= nowDay);
   const paid = past ? spent.fixes : sum(fixed.filter(isPaid).map(f => f.cents));
-  return { cfg, items, spent, fixed, revenue, budgets, envelope, planned, real, reste, past, cur, isPaid, paid };
+  return { cfg, items, plans, reserved, spent, fixed, revenue, budgets, envelope, planned, real, reste, past, cur, isPaid, paid };
 }
 const hasData = m => { const c = compute(m); return c.real > 0 || c.revenue > 0; };
 function knownMonths() {
@@ -377,11 +385,11 @@ const emptyBudget = () => mode === "loading"
   ? '<p class="small" style="text-align:center">Chargement de ton budget…</p>'
   : `<div class="panel" style="padding-block:18px;text-align:center"><p style="margin-top:0;font-weight:700">Rien d'enregistré pour ce mois.</p><p class="small">Renseigne tes revenus et charges fixes, puis ajoute tes dépenses avec le bouton +.</p><button class="btn" data-act="settings">Renseigner mon budget</button></div>`;
 
-function meterRow(id, c, label, amount, of, statusText, pill, pct, pillCls, over) {
+function meterRow(id, c, label, amount, of, statusText, pill, pct, pillCls, over, heldPct) {
   const tick = c.cur ? `<b style="left:${(now().getDate() / daysIn(ui.month) * 100).toFixed(1)}%" title="Aujourd'hui"></b>` : "";
   return `<button class="row" data-act="gocat" data-v="${id}">
     <div class="rowhead">${catDot(id)}<span class="name">${esc(label)}</span><span class="amt">${eur(amount)}</span>${of ? `<span class="of">/ ${eur(of)}</span>` : ""}</div>
-    ${pct == null ? "" : `<div class="meter ${over ? "over" : ""}" style="--c:var(--c-${id})"><i style="width:${Math.min(100, Math.max(0, pct))}%"></i>${tick}</div>`}
+    ${pct == null ? "" : `<div class="meter ${over ? "over" : ""}" style="--c:var(--c-${id})"><i style="width:${Math.min(100, Math.max(0, pct))}%"></i>${heldPct ? `<u style="left:${Math.min(100, pct)}%;width:${Math.min(heldPct, Math.max(0, 100 - pct))}%"></u>` : ""}${tick}</div>`}
     <div class="status"><span>${esc(statusText)}</span>${pill ? `<span class="pill ${pillCls}">${esc(pill)}</span>` : ""}</div>
   </button>`;
 }
@@ -390,10 +398,16 @@ function budgetRow(id, c) {
   const label = CAT[id].label;
   if (b <= 0 && s <= 0) return meterRow(id, c, label, 0, 0, id === "autres" ? "Rien de disponible ce mois-ci" : "Pas de budget fixé", "", null, "", false);
   if (b <= 0 && id !== "autres") return meterRow(id, c, label, s, 0, "Pas de budget fixé", "", null, "", false);
-  const left = b - s, pct = b > 0 ? s / b * 100 : 100;
+  const held = id === "autres" ? c.reserved : 0;
+  const left = b - s - held, pct = b > 0 ? s / b * 100 : 100;
   const over = left < 0;
   const pill = over ? "Dépassé" : pct >= 85 ? "Presque atteint" : "";
-  return meterRow(id, c, label, s, b, over ? "Dépassé de " + eur(-left) : "Reste " + eur(left), pill, pct, over ? "over" : "warn", over);
+  const text = (over ? "Dépassé de " + eur(-left) : "Reste " + eur(left)) + (held ? ", " + eur(held) + " prévus" : "");
+  return meterRow(id, c, label, s, b, text, pill, pct, over ? "over" : "warn", over, b > 0 && held ? held / b * 100 : 0);
+}
+function plannedRow(e) {
+  const line = "Prévu" + (e.sub ? " · " + e.sub : "");
+  return `<div class="itemrow"><button class="item" data-act="edit" data-v="${esc(e.id)}"><div class="t"><div class="n">${esc(e.label || "Dépense prévue")}</div><div class="d">${esc(line)}</div></div><div class="a">${eur(e.cents)}</div></button><button class="mini" data-act="bought" data-v="${esc(e.id)}">Acheté</button></div>`;
 }
 function viewMois() {
   const c = compute(ui.month);
@@ -412,6 +426,9 @@ function viewMois() {
   html += `</div>`;
   if (c.cur) html += `<p class="small" style="margin:8px 4px 0">Le trait sur les barres marque où on en est du mois (${now().getDate()}/${daysIn(ui.month)}). Le budget des dépenses libres, c'est ce qu'il te reste après fixes, carburant, courses et frais pro : il change chaque mois.</p>`;
   html += `</section>`;
+  if (c.plans.length) {
+    html += `<section><h2>${c.past ? "Prévu, jamais acheté" : "Prévu, pas encore acheté"}</h2><div class="panel">${c.plans.map(plannedRow).join("")}</div>${c.past ? '<p class="small" style="margin:8px 4px 0">Le mois est fini : ces montants ne comptent plus dans ton reste.</p>' : ""}</section>`;
+  }
   if (!c.past && c.fixed.length) {
     const upcoming = c.cur || ui.month > curMonth() ? c.fixed.filter(f => f.cents && f.day && !c.isPaid(f)).sort((a, b) => a.day - b.day) : [];
     const undated = c.fixed.filter(f => f.cents && !f.day);
@@ -444,7 +461,7 @@ function viewDepenses() {
   const groups = order.map(id => {
     const list = c.items.filter(e => e.cat === id).sort(byDate);
     const fromSummary = c.cfg.summary ? (c.cfg.totals || {})[id] || 0 : 0;
-    const body = (id === "fixes" ? c.fixed.slice().sort((a, b) => (a.day || 99) - (b.day || 99)).map(f => fixedItem(f, c)).join("") : "") + list.map(expenseItem).join("")
+    const body = (id === "autres" ? c.plans.map(plannedRow).join("") : "") + (id === "fixes" ? c.fixed.slice().sort((a, b) => (a.day || 99) - (b.day || 99)).map(f => fixedItem(f, c)).join("") : "") + list.map(expenseItem).join("")
       + (fromSummary ? `<div class="item"><div class="t"><div class="n">Total saisi pour ce mois</div></div><div class="a">${eur(fromSummary)}</div></div>` : "");
     if (!body && ui.filter === "all") return "";
     return `<section><div class="grouphead"><h2>${catDot(id)}${esc(CAT[id].label)}</h2><span class="tot">${eur(c.spent[id])}</span></div>
@@ -494,7 +511,7 @@ function viewCamembert() {
 }
 function viewSubs() {
   const year = ui.subRange === "year", from = year ? shiftMonth(ui.month, -11) : ui.month;
-  const items = Object.entries(state.expenses).map(([id, e]) => ({ id, ...e })).filter(e => e.cat === "autres" && e.month >= from && e.month <= ui.month);
+  const items = Object.entries(state.expenses).map(([id, e]) => ({ id, ...e })).filter(e => e.cat === "autres" && !e.planned && e.month >= from && e.month <= ui.month);
   const groups = {};
   items.forEach(e => { const k = e.sub || TO_SORT; (groups[k] = groups[k] || []).push(e); });
   const list = Object.entries(groups).map(([name, es]) => ({ name, es: es.sort((a, b) => b.cents - a.cents), cents: sum(es.map(e => e.cents)) })).sort((a, b) => (a.name === TO_SORT) - (b.name === TO_SORT) || b.cents - a.cents);
@@ -611,21 +628,36 @@ function guessSub() {
   const hit = Object.values(state.expenses).filter(e => e.sub && (e.label || "").toLowerCase() === label).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
   if (hit) { form.sub = hit.sub; renderSubs(); }
 }
+function renderPlan() {
+  const can = form.cat === "autres";
+  if (!can) form.plan = false;
+  $("f-planwrap").hidden = !can;
+  document.querySelectorAll('[data-act="fplan"]').forEach(b => b.setAttribute("aria-pressed", String((b.dataset.v === "plan") === !!form.plan)));
+  $("f-datewrap").hidden = !!form.plan;
+  $("f-planhint").hidden = !form.plan;
+  $("f-planhint").textContent = "Réservé sur " + monthName(form.planMonth) + ". Pour un autre mois, va dessus avec les flèches.";
+  $("f-submit").textContent = form.plan ? (form.id ? "Enregistrer" : "Prévoir") : (form.id ? "Enregistrer" : "Ajouter");
+}
 function renderCatPicker() {
   renderSubs();
+  renderPlan();
   $("f-cats").innerHTML = ADD_CATS.map(id => `<button type="button" class="chip" data-act="fcat" data-v="${id}" aria-pressed="${form.cat === id}">${form.cat === id ? "" : catDot(id)}${esc(CAT[id].short)}</button>`).join("");
   const s = suggestions(form.cat);
   $("f-sugg").innerHTML = s.map(l => `<button type="button" class="chip" data-act="fsugg" data-v="${esc(l)}">${esc(l)}</button>`).join("");
   $("f-sugg").hidden = !s.length;
 }
-function openExpense(id) {
+function openExpense(id, bought) {
   const e = id ? state.expenses[id] : null;
   const defDate = ui.month === curMonth() ? todayISO() : ui.month + "-" + pad(daysIn(ui.month));
-  form = { id, cat: e ? e.cat : (ADD_CATS.includes(ui.filter) && ui.tab === "depenses" ? ui.filter : "courses"), sub: e && e.sub || "", sure: false };
-  openSheet(`${sheetHead(e ? "Modifier la dépense" : "Nouvelle dépense")}
+  form = { id, cat: e ? e.cat : (ADD_CATS.includes(ui.filter) && ui.tab === "depenses" ? ui.filter : "courses"), sub: e && e.sub || "", plan: !!(e && e.planned && !bought), planMonth: e ? e.month : ui.month, sure: false };
+  openSheet(`${sheetHead(bought ? "Tu l'as acheté à combien ?" : e ? "Modifier la dépense" : "Nouvelle dépense")}
     <form id="f-exp" class="stack" style="gap:14px" novalidate>
       <div class="moneybig"><input id="f-amount" inputmode="decimal" autocomplete="off" placeholder="0,00" aria-label="Montant en euros" value="${e ? moneyInput(e.cents) : ""}"><span>€</span></div>
       <div class="wrapchips" id="f-cats" role="group" aria-label="Catégorie"></div>
+      <div id="f-planwrap" class="stack" style="gap:6px" hidden>
+        <div class="seg"><button type="button" data-act="fplan" data-v="paid" aria-pressed="true">Déjà payé</button><button type="button" data-act="fplan" data-v="plan" aria-pressed="false">À prévoir</button></div>
+        <p class="small" id="f-planhint" style="margin:0" hidden></p>
+      </div>
       <div id="f-subwrap" class="stack" style="gap:6px" hidden>
         <div class="colhead" style="margin:0">Dans quoi ? (facultatif)</div>
         <div class="wrapchips" id="f-subs" role="group" aria-label="Sous-catégorie"></div>
@@ -633,26 +665,28 @@ function openExpense(id) {
       </div>
       <label class="f">Libellé (facultatif)<input class="inp" id="f-label" maxlength="60" autocomplete="off" placeholder="Soirée, kiné, plein…" value="${esc(e ? e.label : "")}"></label>
       <div class="wrapchips" id="f-sugg"></div>
-      <label class="f">Date<input class="inp" id="f-date" type="date" value="${esc(e ? (e.date || "") : defDate)}"></label>
+      <label class="f" id="f-datewrap">Date<input class="inp" id="f-date" type="date" value="${esc(e && !e.planned ? (e.date || "") : defDate)}"></label>
       <div class="err" id="f-err" hidden></div>
-      <button class="btn" type="submit">${e ? "Enregistrer" : "Ajouter"}</button>
+      <button class="btn" id="f-submit" type="submit">${e ? "Enregistrer" : "Ajouter"}</button>
       ${e ? '<button class="btn danger" type="button" id="f-del" data-act="fdel">Supprimer cette dépense</button>' : ""}
     </form>`);
   renderCatPicker();
-  if (!e) $("f-amount").focus();
+  if (!e || bought) $("f-amount").focus();
 }
 function submitExpense() {
   const cents = parseMoney($("f-amount").value), err = $("f-err");
   if (!cents || isNaN(cents)) { err.textContent = "Indique un montant, par exemple 24,38."; err.hidden = false; $("f-amount").focus(); return; }
-  const date = $("f-date").value || null, old = form.id ? state.expenses[form.id] : null;
+  const date = form.plan ? null : ($("f-date").value || null), old = form.id ? state.expenses[form.id] : null;
   const doc = { cents, cat: form.cat, label: $("f-label").value.trim(), date, month: date ? date.slice(0, 7) : (old ? old.month : ui.month), createdAt: old ? old.createdAt : Date.now() };
   const sub = form.cat === "autres" ? ($("f-subnew").value.trim() || form.sub) : "";
   if (sub) doc.sub = sub;
+  if (form.plan) { doc.planned = true; doc.month = form.planMonth; }
   const id = form.id || uid("e");
   save("expenses", id, doc);
   closeSheet();
   const other = doc.month !== ui.month ? " sur " + monthName(doc.month) : "";
-  toast(`${old ? "Modifié" : "Ajouté"} : ${eur(cents)} en ${CAT[doc.cat].short}${other}`, () => save("expenses", id, old || null));
+  const verb = form.plan ? "Réservé" : old && old.planned ? "Acheté" : old ? "Modifié" : "Ajouté";
+  toast(`${verb} : ${eur(cents)} en ${doc.sub || CAT[doc.cat].short}${other}`, () => save("expenses", id, old || null));
 }
 function rowsRevenue(list) {
   return list.map((r, i) => `<div class="formrow" data-rev="${esc(r.id)}"><input class="inp" id="r-l-${i}" aria-label="Revenu" value="${esc(r.label)}"><input class="inp" id="r-a-${i}" inputmode="decimal" aria-label="Montant" placeholder="€" value="${moneyInput(r.cents)}"><button type="button" class="x" data-act="rmrow" aria-label="Retirer">×</button></div>`).join("");
@@ -785,6 +819,8 @@ const actions = {
   past() { openPast(null); },
   close() { closeSheet(); },
   backdrop(v, ev) { if (ev.target === ev.target.closest(".backdrop")) closeSheet(); },
+  bought(v) { openExpense(v, true); },
+  fplan(v) { form.plan = v === "plan"; renderPlan(); },
   fcat(v) { form.cat = v; renderCatPicker(); guessSub(); },
   fsugg(v) { $("f-label").value = v; guessSub(); },
   fsub(v) { form.sub = form.sub === v ? "" : v; $("f-subnew").value = ""; $("f-subnew").hidden = true; renderSubs(); },
